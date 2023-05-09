@@ -1,0 +1,300 @@
+---
+title: "Factors Affecting Relapse of Cervical Cancer"
+subtitle: "STAC51 Final Case Study Winter 2023"
+author: "Sanskriti Kanagala, Jerry Dang, Steven Pham and Priyal Bhasin"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+\begin{center}
+Sanskriti(1006779540) - Exploratory Data Analysis and Model Validation\\
+
+Jerry(1005838685) - Model Building, Model Selection and Conclusion\\
+
+Steven - Background research, Presentation and Limitations\\
+
+Priyal(1007311703) - Model Validation and Presentation
+\end{center}
+
+```{r message = FALSE,echo = FALSE}
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(pROC)
+library(caret)
+library(ResourceSelection)
+library(corrplot)
+library(MASS)
+library(gridExtra)
+```
+\pagebreak
+# Background Information
+Cervical cancer is a type of cancer that occurs in the cells of the cervix, most commonly caused by the human papillomavirus (HPV) through a sexually transmitted infection ("Cervical cancer", 2022). According to the World Health Organization (WHO), there were approximately 604,000 new cases of cervical cancer in 2020, and the disease is responsible for about 342,000 annual deaths ("Prevent cervical cancer", 2023). The relapse of cervical cancer is an important issue that requires studying, and it was found that there may be certain variables contributing to relapse. By analyzing these variables, we can identify risk factors for patients that have already received a treatment for the disease and predict the probability of the cancer coming back.
+
+It was found that these variables were: patient number, surgery date, if the patient received radiation therapy or not, the age of the patient, the presence of capillary lymphatic spaces, the status of the disease, cell differentiation, histolog, the remaining disease after surgery, the depth of the tumor, the date of the reoccurrence of the disease, the size of the tumor, and the follow-up date. The analyses in this report are as follows: First, the individual variables of the dataset will be analyzed. Then, model selection methods will be applied to select a suitable regression model that will assist in predicting the probability of relapse of cervical cancer, and various model diagnostics will be applied. Finally, the findings of the report will be summarized, and possible limitations of the study will be addressed.
+
+
+
+# Research Question(s)
+For this study, the study questions were figuring out which of the given variables are important in predicting the relapse of cervical cancer, as well as creating a method for classifying patients based on their individual risk of relapse.
+
+
+# Load the DataSet
+```{r}
+data = read_excel("cervical_cancer.xls")
+```
+
+# Exploratory Data Analysis
+## The Data
+Our dataset contains the following variables:\newline
+-MRNO : Patient Number\newline
+-SURGDAT : Sugery Date\newline
+-ADJ_RAD : Received radiation therapy (0 = no, 1 = yes)\newline
+-AGE_1 : Patient Age\newline
+-CLS_1 : Capillary Lymphatic Spaces (0 = negative,1 or 2 = positive – 2 means more positive cells)\newline
+-DIS_STA : Disease Status (0 = no disease, 1= alive + disease, 2 = dead + disease, 3 = dead + complications (disease present), 4 = dead + complications (disease absent), 5 = dead (unrelated causes)\newline
+-GRAD_1 : Cell differentiation ( 1 = better, 2 = moderate, 3 = worst, 0 = missing value)\newline
+-HISTOLOG : Ranging from 0 to 6, stands for the type of histology (determined by the pathologist) of the cancer cells\newline
+-MARGINS : Disease remaining after surgery (0 = clear, 1 = para-vaginal area, 2 = vaginal area, 3 = both)\newline
+-MAXDEPTH_1 : Depth of Tumor (mm)\newline
+-PELLYMPH_1 :  (0 = negative, 1 = positive)\newline
+-RECURRN1 : Date of reoccurrence of disease\newline
+-SIZE_1 : Size of tumor (mm) upon diagnosis\newline
+-FU_DATE : Follow-up date
+
+If there is recurrence of cancer, a date is recorded otherwise there is no entry recorded. To make analysis easier, we decided to convert recurrence column to relapse column with "1" when there is a relapse of cancer and "0" when there is no relapse of cancer
+
+For our analysis, we will not be taking into consideration FU_DATE and SURGDATE as they are not significant factors to predict relapse of cancer. 
+
+```{r}
+data = data %>% mutate(Relapse = case_when(!is.na(data$RECURRN1) ~ 1,
+                                    TRUE ~ 0))
+```
+
+```{r echo = FALSE, eval=FALSE}
+summary(data)
+```
+
+We found that there are lot of missing values or na values in our dataset. Removing those values that contains NA in them. In ADJ_rad we see that max is 4 which does not match with our description of data, so we decided to remove that observations from our data.
+```{r}
+df = data %>% dplyr::select(!starts_with("REC"))
+df = df[complete.cases(df), ] 
+df = df %>% filter(!ADJ_RAD>1)
+```
+
+## Correlation plot for Categorical Variables
+```{r fig.width=4, fig.height=4,echo=FALSE}
+quant_var = c("ADJ_RAD", "AGE_1", "CLS_1", "DIS_STA", "GRAD_1", "HISTOLOG_1", "MARGINS", "PELLYMPH_1", "MAXDEPTH_1", "SIZE_1")
+df1 <- df[ ,quant_var]
+corrplot(cor(df1))
+```
+
+```{r echo = FALSE}
+cor(df1)
+```
+
+There is no significant problem of multi-correlation between our variables. We will need to use all the variables/predictors in our analysis. 
+
+## Analysis of Categorical Variables
+```{r echo = FALSE}
+p1 <- ggplot(df) + geom_bar(aes(x = ADJ_RAD,fill = as.factor(Relapse)))
+p2 <- ggplot(df) + geom_bar(aes(x = CLS_1,fill = as.factor(Relapse)))
+p3 <- ggplot(df) + geom_bar(aes(x = DIS_STA,fill = as.factor(Relapse)))
+p4 <- ggplot(df) + geom_bar(aes(x = GRAD_1,fill = as.factor(Relapse)))
+p5 <- ggplot(df) + geom_bar(aes(x = HISTOLOG_1,fill = as.factor(Relapse)))
+p6 <- ggplot(df) + geom_bar(aes(x = MARGINS,fill = as.factor(Relapse)))
+p7 <- ggplot(df) + geom_bar(aes(x = PELLYMPH_1,fill = as.factor(Relapse)))
+grid.arrange(p1, p2,p3,p4,p5,p6,p7, nrow = 4)
+```
+We notice that there is higher proportion of no-relapse among the patients, we will need to do further analysis using stepAIC to see which categorical variables can affect the relapse of cancer.
+
+## Analysis of Quntative Variables
+
+The following graphs will try to answer 3 questions:\newline 
+* Which age group had most number of relapse?\newline
+* What is the max tumor depth and how it relates to relapse of cancer?\newline
+* What is the most prominent size of tumor and how it relates to relapse of cancer?\newline
+
+```{r echo=FALSE, fig.width=6, fig.height=4}
+df3 <- df
+w = c(5,10,15,20,25,30,35,40,45,50,55,60 ,65,70,75,80,85,Inf)
+df3$Age.Group = cut(df3$AGE_1,breaks = w)
+ggplot(df3) +
+geom_bar(aes(x = Age.Group, fill = as.factor(Relapse))) +
+ggtitle("Which age group had most number of relapse?")+theme(axis.text.x = element_text(angle = 90))
+```
+
+It looks like that Age.Group between 30 to 40 had most number of relapse among others.We can also see that the age group from 35 to 40, also have the highest number of cases for cervical cancer.
+
+```{r echo = FALSE,fig.width=6, fig.height=4}
+#w = seq(0,46,by = 1)
+df3$Max.Depth = cut(df3$MAXDEPTH_1,breaks = -1:50)
+ggplot(df3) +
+geom_bar(aes(x = Max.Depth,fill = as.factor(Relapse))) +
+ggtitle("Which max depth were most significant?") + theme(axis.text.x = element_text(angle = 90))
+```
+
+The most common tumor depth was found to be between 4mm to 5mm, and we can also see that this group shows most number of relapse of cancer, compared to other groups.
+
+```{r echo=FALSE,fig.width=6, fig.height=4}
+#w = c(0:46,by = 0.01)
+df3$Size = cut(df3$SIZE_1,breaks = -1:100)
+ggplot(df3) +
+geom_bar(aes(x = Size,fill = as.factor(Relapse))) +
+ggtitle("Which size of tumor were most significant?")+theme(axis.text.x = element_text(angle = 90))
+```
+
+For size variable we need to take into consideration that some of them are labeled as 0 due to lack of consistency in coding and that's why it is also highest in our data set.
+
+
+# Model Analysis
+
+```{r}
+A <- as.factor(df$ADJ_RAD)
+C <- as.factor(df$CLS_1)
+D <- as.factor(df$DIS_STA)
+G <- as.factor(df$GRAD_1)
+H <- as.factor(df$HISTOLOG_1)
+M <- as.factor(df$MARGINS)
+P <- as.factor(df$PELLYMPH_1)
+R <- as.factor(df$Relapse)
+
+D1 <- as.numeric(df$DIS_STA==1)
+D2 <- as.numeric(df$DIS_STA==2)
+```
+
+## Main Effect Model 
+First, we fit our full model with all our chosen data. We used all the variables mentioned from before except for the dates of surgery and follow-ups since it was not relevant for our purposes to build the main effect model.
+
+```{r message = FALSE, warning = FALSE}
+full.model <- glm(R ~ A + AGE_1 + C + D + G + H + M + MAXDEPTH_1 + P + SIZE_1, data = df, family = binomial)
+summary(full.model)
+```
+
+There are some variables which are non significant in our model, so we decided to use backwards elimination with stepAIC to find a better model for our data.
+
+```{r message = FALSE, warning = FALSE,results = 'hide'}
+reduced.model <- stepAIC(full.model)
+```
+```{r}
+summary(reduced.model)
+```
+
+Using stepAIC for backwards elimination, the resulting predictors from the reduced model without interaction terms are age, disease status, grad which is the state of the cervix cell, depth of the tumor and size of the tumor upon diagnosis
+glm(R ~ AGE_1 + D + G + MAXDEPTH_1)
+AIC: 129.99
+
+
+## Model with Interaction Term
+
+To make the model better, we took some of the predictors from the reduced model and put the quantitative variables as the main interaction predictors. There were other ways to get a better model but after several tries with other models, we decided to continue with this model based off the reduced model from the main effect model.
+
+```{r message = FALSE, warning = FALSE,results = 'hide'}
+# Interaction model - < 0.05 (significant interaction, otherwise no significance)
+int.model <- glm(R ~ (AGE_1 + MAXDEPTH_1) * G + D, data = df, family = binomial)
+reduced.model1 <- stepAIC(int.model)
+```
+```{r}
+summary(reduced.model1)
+```
+
+glm(R ~ AGE_1 + MAXDEPTH_1 + G + D + AGE_1:G)
+AIC = 128.11
+Using stepAIC for backwards elimination, the reduced model with interaction terms includes the age, depth of tumor, state of cell, disease status, and an interaction term age:state of the cell. 
+
+The reduced interaction model has a slightly lower AIC value compared to othe main effect reduced model without interaction, we decided to go with the model with an interaction term. 
+
+
+# Model Validation/Diagnostics
+## Splitting data into train and test data
+For the purposes of model validation, we split our dataset into 20-80 randomly selected observations used to create the training set and the other used as our validation set.
+```{r}
+set.seed(1006779540)
+n = nrow(df)
+dv.sample <- sample(1:nrow(df),floor(nrow(df)*.8),replace = FALSE)
+df.train <- df[dv.sample,]
+df.test <- df[-dv.sample,]
+```
+
+## Model on training
+```{r}
+model1 <- glm(Relapse ~ AGE_1 + MAXDEPTH_1 + GRAD_1 + DIS_STA + AGE_1:GRAD_1, data = df.train , family = binomial)
+```
+
+## ROC curve and AUC
+```{r fig.width=4, fig.height=4,message=FALSE}
+
+y_hat_int = predict(model1,type = "response",newdata = df.test)
+mean1 <- mean(y_hat_int)
+roc_logit = roc(df.test$Relapse~y_hat_int,plot = TRUE,print.auc = TRUE)
+```
+
+The AUC = 0.9528 which is very close to 1, the model fits the data very well.
+
+## Hosmer-Lemeshow Test
+Since our data is ungrouped data, we need to perform hosmer-lemeshow test. 
+```{r}
+hoslem.test(model1$y, fitted(model1), g=7)
+```
+Since p-value > 0.05, we fail to reject the null hypothesis and can say that model with interaction terms fit the data well. 
+
+## Confusion Matrix
+```{r}
+predictions <- ifelse(y_hat_int>0.09, 1, 0)
+confusionMatrix(as.factor(predictions), as.factor(df.test$Relapse))
+```
+We can see that accuracy, sensitivity and specificity all have very high value and pretty close to 1, thus making our model pretty accurate.
+
+## Residual Diagnostics
+```{r}
+deviance.r <- rstandard(model1)
+mu.fit <- fitted(model1)
+deviance.r[which(abs(deviance.r)>3)]
+```
+
+```{r fig.width=4, fig.height=4}
+hist(deviance.r)
+```
+
+The majority of the values are between -2 and 2. Therefore we can conclude that selected model fits data well.
+
+# Limitations
+In the study, there were a large number of variables included in the dataset. However, the study may be limited due to the absence of certain variables, such as side effects that the patient received following treatment, or the overall health of the patient. In addition, the dataset includes patient information from approximately 3 decades ago. Our predictions that we make based on this information may not accurately predict relapse considering the exponential advancements made in medical technology over the years. Some of the values included in the dataset were also empty (NA values) and had to be replaced.
+
+Some of these limitations are out of our control due to the dataset being rather old and although some missing values are filled with constant values to denote that those values are indeed missing, it does limit our ability to reliably say that these results are concrete
+
+# Discussions and Conclusion
+
+```{r echo = FALSE}
+par(mfrow=c(2,2))
+plot(df.train$MAXDEPTH_1, df.train$Relapse)
+plot(df.train$GRAD_1, df.train$Relapse)
+plot(df.train$AGE_1, df.train$Relapse)
+plot(df.train$DIS_STA, df.train$Relapse)
+```
+
+
+The goal of this report was to determine which factors were most significant in determining whether a cervical cancer patient would have a relapse and to classify patients as 'Low Relapse', 'Moderate Relapse', and 'High Relapse'. From our analysis, we can conclude that Age (AGE_1), the max depth (MAXDEPTH_1) of the tumor, the condition/state of the cervix cell(s) (GRAD), the disease status of the patient (DIS_STA), are factors that are most likely to affect the relapse probability of a patient diagnosed with cervical cancer. In order to categorize the patients with cervical cancer into the three categories mentioned previously, we have to look at the probability depending on each value of every predictor. Although it is difficult to classify very precisely since there are quite a few variables still in consideration, we can see that the age group of 30-40 years old, and a tumor max depth from 1-5mm have had the most relapses, so patients with those statistics can be classified as 'High Relapse'. 'Moderate Relapse' can be applied to age groups around 20-30 and 40-50 and 'Low Relapse' for all other age groups. A disease status of 1, and 2 can be considered in 'High Relapse' and 'Moderate Relapse' categories and even with no disease, we would classify this as 'Low Relapse' but the chance of relapsing is not zero. Looking at the model, the coefficients most contributing to the probability of relapse seems to be the disease status, and status of the cervix cell while keep all other predictors constant, therefore we can conclude that the classification of a patient have cervical cancer depends to a certain extent on those factors as well. Of course, the healthier the cell, the lower the classification. 1 - better to 3 - worst differentiation in cells meaning that someone with a 3 in the GRAD_1 category (cell status) would have a higher chance to be classified 'High Relapse' and someone with a 1 would be more likely to be classified 'Low Relapse'. 
+
+\pagebreak
+# Appendix
+## All libraries used
+```{r message = FALSE,eval = FALSE}
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(pROC)
+library(caret)
+library(ResourceSelection)
+library(corrplot)
+library(MASS)
+```
+
+# References
+Cervical cancer. World Health Organization. (2022, February 22). Retrieved April 9, 2023, from https://www.who.int/news-room/fact-sheets/detail/cervical-cancer 
+
+Prevent cervical cancer. Centers for Disease Control and Prevention. (2023, January 24). Retrieved April 9, 2023, from https://www.cdc.gov/healthequity/features/cervical-cancer/index.html#:~:text=Cervical\
+%20cancer%20is%20the%20fourth,cancer%20and%20342%2C000%20deaths%20worldwide. 
